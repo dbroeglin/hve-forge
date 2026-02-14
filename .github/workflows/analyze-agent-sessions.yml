@@ -2,7 +2,7 @@ name: Analyze Agent Sessions
 
 on:
   workflow_run:
-    workflows: ["copilot-setup-steps", "Copilot Setup Steps"]
+    workflows: ["Copilot coding agent"]
     types: [completed]
 
 permissions:
