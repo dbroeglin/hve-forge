@@ -13,6 +13,7 @@ from hve_forge.retrospective import (
     RETROSPECTIVE_SYSTEM_MESSAGE,
     _build_mcp_servers,
     _build_session_config,
+    _ensure_copilot_cli_executable,
     _format_tool_arguments,
     _make_event_handler,
     _tool_label,
@@ -418,3 +419,446 @@ def test_event_handler_session_idle_terse_stops_live() -> None:
 
     assert done.is_set()
     mock_live.stop.assert_called_once()
+
+
+# --- Additional coverage tests ---
+
+
+def test_format_tool_arguments_non_string_non_dict() -> None:
+    """Test formatting an argument that is neither str, dict, nor None."""
+    assert _format_tool_arguments(42) == "42"
+    assert _format_tool_arguments([1, 2, 3]) == "[1, 2, 3]"
+
+
+def test_truncate_exact_length() -> None:
+    """Test that text exactly at max_length is not truncated."""
+    text = "a" * 500
+    assert _truncate(text) == text
+
+
+def test_truncate_default_max_length() -> None:
+    """Test truncation with the default max_length of 500."""
+    text = "b" * 600
+    result = _truncate(text)
+    assert len(result) == 501  # 500 chars + ellipsis
+    assert result.endswith("…")
+
+
+def test_build_mcp_servers_with_github_token() -> None:
+    """Test that MCP server config picks up GITHUB_TOKEN from environment."""
+    with patch.dict("os.environ", {"GITHUB_TOKEN": "test-token-123"}):
+        servers = _build_mcp_servers()
+    github_env = servers["github"]["env"]
+    assert github_env["GITHUB_PERSONAL_ACCESS_TOKEN"] == "test-token-123"
+
+
+def test_build_mcp_servers_without_github_token() -> None:
+    """Test that MCP server config uses empty string when no GITHUB_TOKEN."""
+    with patch.dict("os.environ", {}, clear=True):
+        servers = _build_mcp_servers()
+    github_env = servers["github"]["env"]
+    assert github_env["GITHUB_PERSONAL_ACCESS_TOKEN"] == ""
+
+
+@patch("hve_forge.retrospective.sys")
+@patch("hve_forge.retrospective.os")
+@patch("hve_forge.retrospective.Path")
+def test_ensure_copilot_cli_executable_unix(
+    mock_path_cls: MagicMock,
+    mock_os: MagicMock,
+    mock_sys: MagicMock,
+) -> None:
+    """Test _ensure_copilot_cli_executable on a Unix-like platform."""
+    mock_sys.platform = "linux"
+
+    # Mock the copilot package path
+    mock_copilot = MagicMock()
+    mock_copilot.__file__ = "/fake/copilot/__init__.py"
+    with patch.dict("sys.modules", {"copilot": mock_copilot}):
+        mock_pkg_dir = MagicMock()
+        mock_path_cls.return_value.parent = mock_pkg_dir
+        mock_binary = MagicMock()
+        mock_pkg_dir.__truediv__ = MagicMock(side_effect=lambda x: mock_binary if x == "bin" else mock_pkg_dir)
+        mock_binary.__truediv__ = MagicMock(return_value=mock_binary)
+        mock_binary.exists.return_value = True
+        mock_os.access.return_value = False
+
+        _ensure_copilot_cli_executable()
+
+        mock_binary.chmod.assert_called_once()
+
+
+@patch("hve_forge.retrospective.sys")
+@patch("hve_forge.retrospective.os")
+@patch("hve_forge.retrospective.Path")
+def test_ensure_copilot_cli_executable_already_executable(
+    mock_path_cls: MagicMock,
+    mock_os: MagicMock,
+    mock_sys: MagicMock,
+) -> None:
+    """Test _ensure_copilot_cli_executable when binary is already executable."""
+    mock_sys.platform = "linux"
+
+    mock_copilot = MagicMock()
+    mock_copilot.__file__ = "/fake/copilot/__init__.py"
+    with patch.dict("sys.modules", {"copilot": mock_copilot}):
+        mock_pkg_dir = MagicMock()
+        mock_path_cls.return_value.parent = mock_pkg_dir
+        mock_binary = MagicMock()
+        mock_pkg_dir.__truediv__ = MagicMock(side_effect=lambda x: mock_binary if x == "bin" else mock_pkg_dir)
+        mock_binary.__truediv__ = MagicMock(return_value=mock_binary)
+        mock_binary.exists.return_value = True
+        mock_os.access.return_value = True  # Already executable
+
+        _ensure_copilot_cli_executable()
+
+        mock_binary.chmod.assert_not_called()
+
+
+def test_event_handler_tool_execution_progress_verbose() -> None:
+    """Test that tool execution progress events are handled in verbose mode."""
+    import asyncio
+
+    from rich.console import Console
+
+    console = Console(file=MagicMock(), force_terminal=True)
+    done = asyncio.Event()
+    errors: list[str] = []
+    buffer: list[str] = []
+    handler = _make_event_handler(console, done, errors, buffer, verbose=True)
+
+    event = MagicMock()
+    event.type.value = "tool.execution_progress"
+    event.data.progress_message = "Loading data..."
+
+    handler(event)
+    # Handler should run without errors for non-empty progress messages
+
+
+def test_event_handler_tool_execution_progress_no_message() -> None:
+    """Test that empty progress messages are silently ignored."""
+    import asyncio
+
+    from rich.console import Console
+
+    console = Console(file=MagicMock(), force_terminal=True)
+    done = asyncio.Event()
+    errors: list[str] = []
+    buffer: list[str] = []
+    handler = _make_event_handler(console, done, errors, buffer, verbose=True)
+
+    event = MagicMock()
+    event.type.value = "tool.execution_progress"
+    event.data.progress_message = ""
+
+    handler(event)
+    # Empty progress messages should be silently ignored
+
+
+def test_event_handler_tool_execution_partial_result_verbose() -> None:
+    """Test that partial result events are handled in verbose mode."""
+    import asyncio
+
+    from rich.console import Console
+
+    console = Console(file=MagicMock(), force_terminal=True)
+    done = asyncio.Event()
+    errors: list[str] = []
+    buffer: list[str] = []
+    handler = _make_event_handler(console, done, errors, buffer, verbose=True)
+
+    event = MagicMock()
+    event.type.value = "tool.execution_partial_result"
+    event.data.partial_output = "partial data"
+
+    handler(event)
+    # Handler should run without errors for non-empty partial output
+
+
+def test_event_handler_tool_execution_partial_result_empty() -> None:
+    """Test that empty partial results are silently ignored."""
+    import asyncio
+
+    from rich.console import Console
+
+    console = Console(file=MagicMock(), force_terminal=True)
+    done = asyncio.Event()
+    errors: list[str] = []
+    buffer: list[str] = []
+    handler = _make_event_handler(console, done, errors, buffer, verbose=True)
+
+    event = MagicMock()
+    event.type.value = "tool.execution_partial_result"
+    event.data.partial_output = ""
+
+    handler(event)
+    # Empty partial output should be silently ignored
+
+
+def test_event_handler_assistant_message_terse_stops_live() -> None:
+    """Test that assistant.message stops live display in non-verbose mode."""
+    import asyncio
+
+    from rich.console import Console
+
+    console = Console(file=MagicMock(), force_terminal=True)
+    done = asyncio.Event()
+    errors: list[str] = []
+    buffer: list[str] = ["Hello ", "world"]
+    mock_live = MagicMock()
+    handler = _make_event_handler(console, done, errors, buffer, verbose=False, live=mock_live)
+
+    event = MagicMock()
+    event.type.value = "assistant.message"
+
+    handler(event)
+    mock_live.stop.assert_called_once()
+    assert buffer == []
+
+
+def test_event_handler_assistant_message_empty_buffer() -> None:
+    """Test that assistant.message with empty buffer does not raise."""
+    import asyncio
+
+    from rich.console import Console
+
+    console = Console(file=MagicMock(), force_terminal=True)
+    done = asyncio.Event()
+    errors: list[str] = []
+    buffer: list[str] = []
+    handler = _make_event_handler(console, done, errors, buffer, verbose=True)
+
+    event = MagicMock()
+    event.type.value = "assistant.message"
+
+    handler(event)
+    # Empty buffer should be handled gracefully
+
+
+def test_event_handler_assistant_turn_start_verbose() -> None:
+    """Test that turn start is handled in verbose mode."""
+    import asyncio
+
+    from rich.console import Console
+
+    console = Console(file=MagicMock(), force_terminal=True)
+    done = asyncio.Event()
+    errors: list[str] = []
+    buffer: list[str] = []
+    handler = _make_event_handler(console, done, errors, buffer, verbose=True)
+
+    event = MagicMock()
+    event.type.value = "assistant.turn_start"
+
+    handler(event)
+    # Should print a panel in verbose mode without errors
+
+
+def test_event_handler_assistant_turn_start_terse_updates_live() -> None:
+    """Test that turn start updates spinner in non-verbose mode."""
+    import asyncio
+
+    from rich.console import Console
+
+    console = Console(file=MagicMock(), force_terminal=True)
+    done = asyncio.Event()
+    errors: list[str] = []
+    buffer: list[str] = []
+    mock_live = MagicMock()
+    handler = _make_event_handler(console, done, errors, buffer, verbose=False, live=mock_live)
+
+    event = MagicMock()
+    event.type.value = "assistant.turn_start"
+
+    handler(event)
+    mock_live.update.assert_called_once()
+
+
+def test_event_handler_assistant_turn_end_verbose() -> None:
+    """Test that turn end is handled in verbose mode."""
+    import asyncio
+
+    from rich.console import Console
+
+    console = Console(file=MagicMock(), force_terminal=True)
+    done = asyncio.Event()
+    errors: list[str] = []
+    buffer: list[str] = []
+    handler = _make_event_handler(console, done, errors, buffer, verbose=True)
+
+    event = MagicMock()
+    event.type.value = "assistant.turn_end"
+
+    handler(event)
+    # Should print a panel in verbose mode without errors
+
+
+def test_event_handler_session_start_verbose() -> None:
+    """Test that session start is handled in verbose mode."""
+    import asyncio
+
+    from rich.console import Console
+
+    console = Console(file=MagicMock(), force_terminal=True)
+    done = asyncio.Event()
+    errors: list[str] = []
+    buffer: list[str] = []
+    handler = _make_event_handler(console, done, errors, buffer, verbose=True)
+
+    event = MagicMock()
+    event.type.value = "session.start"
+
+    handler(event)
+    # Should print session started message without errors
+
+
+def test_event_handler_session_error_fallback_to_str() -> None:
+    """Test that session error falls back to str(data) when no content/message."""
+    import asyncio
+
+    from rich.console import Console
+
+    console = Console(file=MagicMock(), force_terminal=True)
+    done = asyncio.Event()
+    errors: list[str] = []
+    buffer: list[str] = []
+    handler = _make_event_handler(console, done, errors, buffer, verbose=True)
+
+    event = MagicMock(spec=[])
+    event.type = MagicMock()
+    event.type.value = "session.error"
+    # Use an object without 'content' or 'message' attributes
+    event.data = "raw error string"
+
+    handler(event)
+    assert done.is_set()
+    assert errors == ["raw error string"]
+
+
+def test_event_handler_tool_complete_verbose_no_result() -> None:
+    """Test tool execution complete with no result in verbose mode."""
+    import asyncio
+
+    from rich.console import Console
+
+    console = Console(file=MagicMock(), force_terminal=True)
+    done = asyncio.Event()
+    errors: list[str] = []
+    buffer: list[str] = []
+    handler = _make_event_handler(console, done, errors, buffer, verbose=True)
+
+    event = MagicMock()
+    event.type.value = "tool.execution_complete"
+    event.data.tool_name = "some_tool"
+    event.data.mcp_server_name = ""
+    event.data.mcp_tool_name = ""
+    event.data.result = None
+
+    handler(event)
+    # Should handle None result gracefully in verbose mode
+
+
+@patch("hve_forge.retrospective.CopilotClient")
+def test_run_retrospective_error_raises_exit(mock_client_class: MagicMock) -> None:
+    """Test that _run_retrospective raises typer.Exit on session error."""
+    import asyncio
+
+    import pytest
+    from click.exceptions import Exit
+
+    from hve_forge.retrospective import _run_retrospective
+
+    mock_client = AsyncMock()
+    mock_client_class.return_value = mock_client
+
+    mock_session = MagicMock()
+    mock_session.send = AsyncMock()
+    mock_session.destroy = AsyncMock()
+    mock_client.create_session = AsyncMock(return_value=mock_session)
+
+    def fake_on(callback: object) -> None:
+        # Simulate a session error followed by idle
+        error_event = MagicMock()
+        error_event.type.value = "session.error"
+        error_event.data.content = "something broke"
+        error_event.data.message = None
+        callback(error_event)  # type: ignore[operator]
+
+    mock_session.on = fake_on
+
+    with pytest.raises(Exit):
+        asyncio.run(_run_retrospective(DEFAULT_PROMPT, "gpt-4o", None))
+
+    mock_client.stop.assert_awaited_once()
+
+
+@patch("hve_forge.retrospective.CopilotClient")
+def test_run_retrospective_non_verbose_uses_live(mock_client_class: MagicMock) -> None:
+    """Test that _run_retrospective uses a Live display in non-verbose mode."""
+    import asyncio
+
+    from hve_forge.retrospective import _run_retrospective
+
+    mock_client = AsyncMock()
+    mock_client_class.return_value = mock_client
+
+    mock_session = MagicMock()
+    mock_session.send = AsyncMock()
+    mock_session.destroy = AsyncMock()
+    mock_client.create_session = AsyncMock(return_value=mock_session)
+
+    def fake_on(callback: object) -> None:
+        event = MagicMock()
+        event.type.value = "session.idle"
+        callback(event)  # type: ignore[operator]
+
+    mock_session.on = fake_on
+
+    # Non-verbose mode (default) should use Live display
+    asyncio.run(_run_retrospective(DEFAULT_PROMPT, "gpt-4o", None, verbose=False))
+
+    mock_client.start.assert_awaited_once()
+    mock_session.send.assert_awaited_once()
+    mock_session.destroy.assert_awaited_once()
+    mock_client.stop.assert_awaited_once()
+
+
+@patch("hve_forge.retrospective.CopilotClient")
+def test_run_retrospective_verbose_mode(mock_client_class: MagicMock) -> None:
+    """Test that _run_retrospective works in verbose mode without Live display."""
+    import asyncio
+
+    from hve_forge.retrospective import _run_retrospective
+
+    mock_client = AsyncMock()
+    mock_client_class.return_value = mock_client
+
+    mock_session = MagicMock()
+    mock_session.send = AsyncMock()
+    mock_session.destroy = AsyncMock()
+    mock_client.create_session = AsyncMock(return_value=mock_session)
+
+    def fake_on(callback: object) -> None:
+        event = MagicMock()
+        event.type.value = "session.idle"
+        callback(event)  # type: ignore[operator]
+
+    mock_session.on = fake_on
+
+    asyncio.run(_run_retrospective(DEFAULT_PROMPT, "gpt-4o", None, verbose=True))
+
+    mock_client.start.assert_awaited_once()
+    mock_session.send.assert_awaited_once()
+    mock_session.destroy.assert_awaited_once()
+    mock_client.stop.assert_awaited_once()
+
+
+def test_tool_label_with_none_values() -> None:
+    """Test tool label when MCP fields are None (not empty strings)."""
+    event = MagicMock()
+    event.data.tool_name = "fallback_tool"
+    event.data.mcp_server_name = None
+    event.data.mcp_tool_name = None
+    # When mcp_server_name is None, the condition `if mcp_server and mcp_tool` is False
+    # and `if mcp_tool` is also False, so it falls back to tool_name
+    assert _tool_label(event) == "fallback_tool"
