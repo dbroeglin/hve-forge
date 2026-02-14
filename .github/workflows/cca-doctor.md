@@ -8,8 +8,6 @@ on:
     workflows: ["Copilot coding agent"]  # Monitor the CCA workflow specifically
     types:
       - completed
-    branches:
-      - main
 
 permissions: read-all
 

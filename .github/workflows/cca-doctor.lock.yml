@@ -24,14 +24,12 @@
 # This workflow is an automated Copilot Coding Agent (CCA) run investigator that triggers CCA runs complete.
 # Performs deep analysis of CCA runs to identify missing good practices that could have been implemented through proper documentation, prompting, copilot instructions, etc.
 #
-# frontmatter-hash: b5777ebf0424957f605f17cedcb8904ef1fa072c3ee1b1912389e88276ab7677
+# frontmatter-hash: b0c54c539a40ec395531c1357cb85402076ceef93edde817795603c05b9e3a2f
 
 name: "Copilot Coding Agent Session Doctor"
 "on":
   workflow_run:
     # zizmor: ignore[dangerous-triggers] - workflow_run trigger is secured with role and fork validation
-    branches:
-    - main
     types:
     - completed
     workflows:
