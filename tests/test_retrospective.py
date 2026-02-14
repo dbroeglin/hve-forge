@@ -440,7 +440,7 @@ def test_truncate_default_max_length() -> None:
     """Test truncation with the default max_length of 500."""
     text = "b" * 600
     result = _truncate(text)
-    assert len(result) == 501  # 500 chars + ellipsis
+    assert len(result) == 501  # 500 chars + 1 ellipsis char
     assert result.endswith("…")
 
 
