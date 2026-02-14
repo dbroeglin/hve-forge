@@ -108,6 +108,43 @@ This will:
 uv run hve-forge
 ```
 
+### Commands
+
+#### `retrospective`
+
+Run a team retrospective using GitHub Copilot with MCP servers. This command analyzes recent repository activity (commits, PRs, issues) and generates a structured retrospective report.
+
+```bash
+uv run hve-forge retrospective
+```
+
+**Options:**
+
+| Option | Short | Description | Default |
+|--------|-------|-------------|---------|
+| `--prompt` | `-p` | Custom prompt for the retrospective | Built-in default prompt |
+| `--model` | `-m` | Model to use for the retrospective | `gpt-4o` |
+| `--github-token` | | GitHub token for authentication | `GITHUB_TOKEN` env var |
+| `--verbose` | `-v` | Show detailed tool call output | Off |
+
+**Examples:**
+
+```bash
+# Run a retrospective with default settings
+uv run hve-forge retrospective
+
+# Run with verbose output to see detailed tool calls
+uv run hve-forge retrospective --verbose
+
+# Use a custom prompt and model
+uv run hve-forge retrospective --prompt "Focus on the last sprint" --model gpt-4o
+
+# Provide a GitHub token explicitly
+uv run hve-forge retrospective --github-token ghp_xxxxxxxxxxxx
+```
+
+> **Tip:** Use `--verbose` (or `-v`) to see each MCP tool invocation and its result — useful for debugging or understanding what data the AI is pulling.
+
 ### Running with `uvx` (no install needed)
 
 Once published to PyPI, anyone can run the tool without installing it:
