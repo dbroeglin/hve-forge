@@ -2,6 +2,7 @@ name: Analyze Agent Sessions
 
 on:
   workflow_run:
+    workflows: ["copilot-setup-steps", "Copilot Setup Steps"]
     types: [completed]
 
 permissions:
@@ -12,10 +13,6 @@ permissions:
 
 jobs:
   analyze:
-    # Only analyze coding agent runs (they use the copilot-setup-steps workflow)
-    if: >-
-      github.event.workflow_run.name == 'copilot-setup-steps' ||
-      github.event.workflow_run.name == 'Copilot Setup Steps'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
