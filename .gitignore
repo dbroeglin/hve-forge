@@ -11,9 +11,6 @@ build/
 # Virtual environments
 .venv/
 
-# UV
-uv.lock
-
 # IDE
 .vscode/
 .idea/
