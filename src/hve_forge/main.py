@@ -15,7 +15,7 @@ def callback(ctx: typer.Context) -> None:
 @app.command()
 def hello() -> None:
     """Say hello to the world."""
-    print("Hello World!")
+    typer.echo("Hello World!")
 
 
 def main() -> None:
