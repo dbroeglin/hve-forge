@@ -1,10 +1,13 @@
 """Tests for hve_forge.main."""
 
-from hve_forge.main import main
+from typer.testing import CliRunner
+
+from hve_forge.main import app
 
 
-def test_main(capsys: object) -> None:
-    """Test that main prints the greeting."""
-    main()
-    captured = capsys.readouterr()  # type: ignore[union-attr]
-    assert "Hello from hve-forge!" in captured.out
+def test_hello_command() -> None:
+    """Test that hello command prints 'Hello World!'."""
+    runner = CliRunner()
+    result = runner.invoke(app, ["hello"])
+    assert result.exit_code == 0
+    assert "Hello World!" in result.stdout
