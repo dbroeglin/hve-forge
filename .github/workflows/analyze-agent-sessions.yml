@@ -1,0 +1,281 @@
+name: Analyze Agent Sessions
+
+on:
+  workflow_run:
+    types: [completed]
+
+permissions:
+  contents: read
+  issues: write
+  actions: read
+  models: read
+
+jobs:
+  analyze:
+    # Only analyze coding agent runs (they use the copilot-setup-steps workflow)
+    if: >-
+      github.event.workflow_run.name == 'copilot-setup-steps' ||
+      github.event.workflow_run.name == 'Copilot Setup Steps'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download workflow logs
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_ID: ${{ github.event.workflow_run.id }}
+        run: |
+          echo "Analyzing workflow run: $RUN_ID"
+          echo "Workflow: ${{ github.event.workflow_run.name }}"
+          echo "Conclusion: ${{ github.event.workflow_run.conclusion }}"
+          echo "Branch: ${{ github.event.workflow_run.head_branch }}"
+          echo "URL: ${{ github.event.workflow_run.html_url }}"
+          echo "---"
+
+          # Download the run logs
+          gh api \
+            -H "Accept: application/vnd.github+json" \
+            "/repos/${{ github.repository }}/actions/runs/${RUN_ID}/logs" \
+            > /tmp/logs.zip 2>/dev/null || true
+
+          if [ -f /tmp/logs.zip ] && [ -s /tmp/logs.zip ]; then
+            mkdir -p /tmp/logs
+            unzip -o /tmp/logs.zip -d /tmp/logs 2>/dev/null || true
+            echo "=== SESSION LOGS ===" > /tmp/transcript.txt
+            find /tmp/logs -type f -name '*.txt' | sort | while read f; do
+              echo "--- $(basename "$f") ---" >> /tmp/transcript.txt
+              cat "$f" >> /tmp/transcript.txt
+              echo "" >> /tmp/transcript.txt
+            done
+          else
+            echo "No logs archive available." > /tmp/transcript.txt
+          fi
+
+          # Also download artifacts (session transcripts if any)
+          gh api \
+            -H "Accept: application/vnd.github+json" \
+            "/repos/${{ github.repository }}/actions/runs/${RUN_ID}/artifacts" \
+            --jq '.artifacts[] | "\(.id) \(.name)"' 2>/dev/null | \
+          while read -r artifact_id artifact_name; do
+            echo "Downloading artifact: $artifact_name ($artifact_id)"
+            gh api \
+              -H "Accept: application/vnd.github+json" \
+              "/repos/${{ github.repository }}/actions/artifacts/${artifact_id}/zip" \
+              > "/tmp/artifact_${artifact_id}.zip" 2>/dev/null || true
+            if [ -f "/tmp/artifact_${artifact_id}.zip" ] && [ -s "/tmp/artifact_${artifact_id}.zip" ]; then
+              mkdir -p "/tmp/artifact_${artifact_id}"
+              unzip -o "/tmp/artifact_${artifact_id}.zip" -d "/tmp/artifact_${artifact_id}" 2>/dev/null || true
+              echo "=== ARTIFACT: $artifact_name ===" >> /tmp/transcript.txt
+              find "/tmp/artifact_${artifact_id}" -type f | sort | while read f; do
+                echo "--- $(basename "$f") ---" >> /tmp/transcript.txt
+                head -c 50000 "$f" >> /tmp/transcript.txt
+                echo "" >> /tmp/transcript.txt
+              done
+            fi
+          done
+
+          # Truncate to avoid exceeding model context
+          head -c 100000 /tmp/transcript.txt > /tmp/transcript_truncated.txt
+          mv /tmp/transcript_truncated.txt /tmp/transcript.txt
+          echo "Transcript size: $(wc -c < /tmp/transcript.txt) bytes"
+
+      - name: Build analysis prompt
+        id: build-prompt
+        run: |
+          cat > /tmp/analysis_prompt.txt << 'PROMPT_HEADER'
+          Analyze this coding agent session for failures or inefficiencies that
+          could be addressed by improving the repository setup.
+
+          ## Context
+          PROMPT_HEADER
+
+          echo "- Repository: ${{ github.repository }}" >> /tmp/analysis_prompt.txt
+          echo "- Workflow run: ${{ github.event.workflow_run.html_url }}" >> /tmp/analysis_prompt.txt
+          echo "- Conclusion: ${{ github.event.workflow_run.conclusion }}" >> /tmp/analysis_prompt.txt
+          echo "- Branch: ${{ github.event.workflow_run.head_branch }}" >> /tmp/analysis_prompt.txt
+
+          cat >> /tmp/analysis_prompt.txt << 'PROMPT_MIDDLE'
+
+          ## What to look for
+          1. Agent struggling with build/test/lint commands (wrong commands, missing setup)
+          2. Agent not following project conventions (could be fixed with better copilot-instructions.md)
+          3. CI failures caused by missing configuration or unclear requirements
+          4. Repeated trial-and-error that better documentation would prevent
+          5. Workflow or tooling gaps that slowed the agent down
+
+          ## What to ignore
+          - Task-specific logic errors (the agent misunderstanding business logic)
+          - Normal iterative development (trying something, testing, adjusting)
+          - Issues already documented in copilot-instructions.md
+
+          ## Session Logs
+          ```
+          PROMPT_MIDDLE
+
+          cat /tmp/transcript.txt >> /tmp/analysis_prompt.txt
+
+          cat >> /tmp/analysis_prompt.txt << 'PROMPT_INSTRUCTIONS'
+          ```
+
+          ## Current copilot-instructions.md
+          ```
+          PROMPT_INSTRUCTIONS
+
+          if [ -f .github/copilot-instructions.md ]; then
+            cat .github/copilot-instructions.md >> /tmp/analysis_prompt.txt
+          else
+            echo "No copilot-instructions.md found" >> /tmp/analysis_prompt.txt
+          fi
+
+          cat >> /tmp/analysis_prompt.txt << 'PROMPT_FOOTER'
+          ```
+
+          Respond with either NO_IMPROVEMENTS_FOUND or a structured analysis:
+          For each issue found, provide:
+          - **Problem**: What went wrong (with evidence from the logs)
+          - **Root cause**: Why it happened
+          - **Suggested fix**: Specific change to make (file to edit, content to add, etc.)
+          PROMPT_FOOTER
+
+      - name: Analyze session for improvements
+        id: analyze
+        uses: actions/ai-inference@v1
+        with:
+          model: openai/gpt-4o
+          max-tokens: 4000
+          temperature: 0.3
+          system-prompt: |
+            You are an expert at analyzing AI coding agent session logs to identify
+            actionable improvements to a repository's setup. You look for patterns
+            where the agent struggled, failed, or was inefficient due to issues that
+            could be fixed by changing repository configuration, CI workflows,
+            custom instructions, documentation, or tooling setup.
+
+            You ONLY report issues that are clearly evidenced in the logs.
+            You do NOT make generic suggestions or best-practice recommendations.
+            If there is nothing actionable, respond with exactly: NO_IMPROVEMENTS_FOUND
+          prompt-file: /tmp/analysis_prompt.txt
+
+      - name: Review and validate findings
+        if: "!contains(steps.analyze.outputs.response, 'NO_IMPROVEMENTS_FOUND')"
+        id: review
+        uses: actions/ai-inference@v1
+        with:
+          model: openai/gpt-4o
+          max-tokens: 4000
+          temperature: 0.2
+          system-prompt: |
+            You are a senior engineer reviewing proposed repository improvements.
+            Your job is to filter out noise and only keep suggestions that are:
+            1. Clearly supported by evidence in the original analysis
+            2. Actionable with a specific, concrete change
+            3. Likely to prevent the same issue in future agent sessions
+            4. Not already covered by existing configuration
+
+            For each suggestion you keep, write a concise GitHub issue body in markdown.
+            Group related suggestions into a single issue if they address the same root cause.
+
+            If after review none of the suggestions pass your quality bar, respond with
+            exactly: NO_IMPROVEMENTS_FOUND
+
+            Otherwise, respond with one or more issues in this exact format (use --- to separate multiple issues):
+
+            ISSUE_TITLE: <concise title>
+            ISSUE_BODY:
+            <markdown body>
+            ---
+          prompt: |
+            Review these proposed improvements from an agent session analysis.
+            Think deeply about whether each one is genuinely actionable and would
+            prevent real problems in future sessions.
+
+            ## Proposed Improvements
+            ${{ steps.analyze.outputs.response }}
+
+            ## Workflow Run
+            ${{ github.event.workflow_run.html_url }}
+
+      - name: Create improvement issues
+        if: "!contains(steps.analyze.outputs.response, 'NO_IMPROVEMENTS_FOUND') && !contains(steps.review.outputs.response, 'NO_IMPROVEMENTS_FOUND')"
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REVIEW_OUTPUT: ${{ steps.review.outputs.response }}
+        run: |
+          # Ensure the label exists
+          gh label create "hve-improvement" \
+            --description "Repository improvement identified from agent session analysis" \
+            --color "7057ff" \
+            --force 2>/dev/null || true
+
+          # Parse and create issues from the review output
+          echo "$REVIEW_OUTPUT" | awk '
+            /^ISSUE_TITLE:/ {
+              if (title != "") {
+                # Print previous issue
+                print title
+                print "BODY_SEP"
+                print body
+                print "ISSUE_SEP"
+              }
+              title = substr($0, 14)
+              body = ""
+              in_body = 0
+              next
+            }
+            /^ISSUE_BODY:/ {
+              in_body = 1
+              next
+            }
+            /^---$/ {
+              if (title != "") {
+                print title
+                print "BODY_SEP"
+                print body
+                print "ISSUE_SEP"
+              }
+              title = ""
+              body = ""
+              in_body = 0
+              next
+            }
+            in_body {
+              body = body (body == "" ? "" : "\n") $0
+            }
+            END {
+              if (title != "") {
+                print title
+                print "BODY_SEP"
+                print body
+                print "ISSUE_SEP"
+              }
+            }
+          ' | while IFS= read -r line; do
+            if [ -z "$issue_title" ]; then
+              issue_title="$line"
+            elif [ "$line" = "BODY_SEP" ]; then
+              issue_body=""
+            elif [ "$line" = "ISSUE_SEP" ]; then
+              if [ -n "$issue_title" ] && [ -n "$issue_body" ]; then
+                # Append source reference
+                issue_body="$issue_body
+
+          ---
+          _Identified from agent session: ${{ github.event.workflow_run.html_url }}_"
+
+                echo "Creating issue: $issue_title"
+                gh issue create \
+                  --title "$issue_title" \
+                  --body "$issue_body" \
+                  --label "hve-improvement"
+              fi
+              issue_title=""
+              issue_body=""
+            else
+              if [ -z "$issue_body" ]; then
+                issue_body="$line"
+              else
+                issue_body="$issue_body
+          $line"
+              fi
+            fi
+          done
