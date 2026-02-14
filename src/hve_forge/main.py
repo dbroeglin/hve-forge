@@ -14,12 +14,6 @@ def callback(ctx: typer.Context) -> None:
         typer.echo(ctx.get_help())
 
 
-@app.command()
-def hello() -> None:
-    """Say hello to the world."""
-    typer.echo("Hello World!")
-
-
 app.command()(retrospective)
 
 
