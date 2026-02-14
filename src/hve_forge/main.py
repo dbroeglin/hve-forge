@@ -2,6 +2,8 @@
 
 import typer
 
+from hve_forge.retrospective import retrospective
+
 app = typer.Typer()
 
 
@@ -16,6 +18,9 @@ def callback(ctx: typer.Context) -> None:
 def hello() -> None:
     """Say hello to the world."""
     typer.echo("Hello World!")
+
+
+app.command()(retrospective)
 
 
 def main() -> None:
