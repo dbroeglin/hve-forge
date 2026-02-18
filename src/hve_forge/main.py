@@ -2,6 +2,7 @@
 
 import typer
 
+from hve_forge.github_stats import github_stats
 from hve_forge.retrospective import retrospective
 
 app = typer.Typer()
@@ -21,6 +22,7 @@ def hello() -> None:
 
 
 app.command()(retrospective)
+app.command(name="github-stats")(github_stats)
 
 
 def main() -> None:
