@@ -145,6 +145,53 @@ uv run hve-forge retrospective --github-token ghp_xxxxxxxxxxxx
 
 > **Tip:** Use `--verbose` (or `-v`) to see each MCP tool invocation and its result — useful for debugging or understanding what data the AI is pulling.
 
+#### `github-stats`
+
+Review GitHub repository statistics using GitHub Copilot with MCP servers. This command analyzes repository metrics and generates a comprehensive statistics report.
+
+```bash
+uv run hve-forge github-stats
+```
+
+**Options:**
+
+| Option | Short | Description | Default |
+|--------|-------|-------------|---------|
+| `--prompt` | `-p` | Custom prompt for the statistics | Built-in default prompt |
+| `--model` | `-m` | Model to use for the analysis | `gpt-4o` |
+| `--github-token` | | GitHub token for authentication | `GITHUB_TOKEN` env var |
+| `--verbose` | `-v` | Show detailed tool call output | Off |
+
+**Default Analysis Includes:**
+
+1. **Repository Overview**: Basic stats (stars, forks, watchers, language, size)
+2. **Recent Activity**: Summary of recent commits, PRs, and issues (last 30 days)
+3. **Contributor Statistics**: Top contributors and their activity patterns
+4. **Pull Request Metrics**: PR volume, merge time, review patterns
+5. **Issue Metrics**: Issue creation rate, resolution time, open vs closed
+6. **Code Evolution**: Language distribution, repository growth trends
+
+**Examples:**
+
+```bash
+# Run with default settings
+uv run hve-forge github-stats
+
+# Run with verbose output to see detailed tool calls
+uv run hve-forge github-stats --verbose
+
+# Focus on specific aspects
+uv run hve-forge github-stats --prompt "Focus on contributor statistics and PR review patterns"
+
+# Use a different model
+uv run hve-forge github-stats --model gpt-4
+
+# Provide a GitHub token explicitly
+uv run hve-forge github-stats --github-token ghp_xxxxxxxxxxxx
+```
+
+> **Tip:** Use `--verbose` (or `-v`) to see each MCP tool invocation and its result — useful for debugging or understanding what data the AI is pulling.
+
 ### Running with `uvx` (no install needed)
 
 Once published to PyPI, anyone can run the tool without installing it:
